@@ -54,6 +54,24 @@ refresh_kong_api_gateway() {
   if [[ $helm_deployment_exists == *"false"* ]]; then
     refresh_helm_repository "kong" "https://charts.konghq.com"
     create_helm_deployment "kong" "api-gateway" "kong/kong" "--set ingressController.installCRDs=false --set admin.enabled=true --set admin.http.enabled=true --set admin.type='ClusterIP'"
+  else
+    log_info "Checking status of kong pods..."
+    local kong_pods_status=""
+    kong_pods_status=$(2>&1 microk8s kubectl get pod -nkong | grep api-gateway | awk '{print $3}')
+
+    if [[ "$?" -ne 0 ]]; then
+      log_error "$kong_pods_status"
+      log_error "Unable to find kong pods, terminating script."
+      exit 1
+    else
+      if [[ $kong_pods_status == "CrashLoopBackOff" ]]; then
+        log_error "Kong pods are in CrashLoopBackOff, recreating kong deployment..."
+        microk8s kubectl delete namespace kong
+        create_namespace "kong"
+        refresh_helm_repository "kong" "https://charts.konghq.com"
+        create_helm_deployment "kong" "api-gateway" "kong/kong" "--set ingressController.installCRDs=false --set admin.enabled=true --set admin.http.enabled=true --set admin.type='ClusterIP'"
+      fi
+    fi
   fi
 
   kubectl_wait_for_pod "kong" "app.kubernetes.io/name=kong" 300
