@@ -318,7 +318,7 @@ start_microk8s() {
   newline
 
   validate_microk8s_ip "$current_ip"
-  refresh_containerd_configuration "$current_ip"
+  #refresh_containerd_configuration "$current_ip" # bugged on microk8s 1.23
   refresh_kubectl_configuration "$invoker_username"
 }
 
@@ -373,7 +373,7 @@ restart_microk8s() {
   newline
 
   validate_microk8s_ip "$current_ip"
-  refresh_containerd_configuration "$current_ip"
+  #refresh_containerd_configuration "$current_ip" # bugged on microk8s 1.23
   refresh_kubectl_configuration "$invoker_username"
 }
 
@@ -434,7 +434,7 @@ refresh_microk8s() {
   newline
 
   validate_microk8s_ip "$current_ip"
-  refresh_containerd_configuration "$current_ip"
+  #refresh_containerd_configuration "$current_ip" # bugged on microk8s 1.23
   refresh_kubectl_configuration "$invoker_username"
 
   eval "$1='$daemons_restarted'"

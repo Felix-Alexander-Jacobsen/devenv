@@ -28,7 +28,7 @@ PLUGIN_PODS=("k8s-app=kube-dns" "k8s-app=kubernetes-dashboard" "k8s-app=hostpath
 PLUGIN_NAMESPACES=("kube-system" "kube-system" "kube-system" "container-registry" "kube-system" "metallb-system" "none")
 
 SLOW_MOTION_TEXT=${SLOW_MOTION_TEXT:-true}
-MICROK8S_VERSION=${MICROK8S_VERSION:-"1.21"}
+MICROK8S_VERSION=${MICROK8S_VERSION:-"1.23"}
 LOADBALANCER_NUM_OF_IP_ADDRESSES=${LOADBALANCER_NUM_OF_IP_ADDRESSES:-16}
 KONG_ENABLED=${KONG_ENABLED:-true}
 DASHBOARD_DOMAIN=${DASHBOARD_DOMAIN:-k8s.devenv.dev}
