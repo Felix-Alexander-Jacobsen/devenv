@@ -35,9 +35,9 @@
 get_version() {
   local major_version="1"
   local minor_version="1"
-  local patch_version="0"
-  local timestamp_version="20221113T223607"
-  local build_version="4"
+  local patch_version="1"
+  local timestamp_version="20221208T004449"
+  local build_version="5"
 
   local retver="$major_version.$minor_version.$patch_version-$timestamp_version.$build_version"
   echo "$retver"

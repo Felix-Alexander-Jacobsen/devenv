@@ -26,10 +26,12 @@
 #. ./liblog.sh # log_info
 #. ./libmicrok8s.sh # run_microk8s_flow
 #. ./libkafka.sh # run_kafka_flow
+#. ./libmongodb.sh # run_mongodb_flow
 
 declare -A FLOWS;
 FLOWS["microk8s"]=run_microk8s_flow
 FLOWS["kafka"]=run_kafka_flow
+FLOWS["mongodb"]=run_mongodb_flow
 
 declare -a FLOW_ACTIONS;
 FLOW_ACTIONS=("start" "restart" "refresh" "stop" "remove")

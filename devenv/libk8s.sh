@@ -515,6 +515,7 @@ create_secret() {
     if [[ $secret_create == *"AlreadyExists"* ]]; then
       log_error "$secret_create"
       log_error "Unable to create secret, terminating script."
+      exit 1
     else
       log_error "$secret_create"
       log_error "Make sure that secret options point to existing files and directories: ${secret_options}, terminating script."
@@ -523,6 +524,117 @@ create_secret() {
   else
     log_success "$secret_create"
   fi
+}
+
+########################
+# Removes a given CRD using kubectl command
+# Arguments:
+#   crd name
+# Returns:
+#   none
+#########################
+kubectl_delete_crd() {
+  if [[ -z "$1" ]]; then
+    log_error "Please make sure to pass crd name argument to kubectl_delete_crd() function."
+    exit 1
+  fi
+
+  local crd_name=$1
+
+  log_info "Removing CRD ${crd_name} if exists..."
+
+  local kubectl_delete_crd_command=""
+  kubectl_delete_crd_command=$(2>&1 microk8s kubectl delete crd "${crd_name}")
+
+  if [[ "$?" -ne 0 ]]; then
+    log_warn "${kubectl_delete_crd_command}"
+  else
+    log_success "${kubectl_delete_crd_command}"
+  fi
+}
+
+########################
+# Removes a given Kubernetes object using kubectl command
+# Arguments:
+#   namespace name
+#   object type
+#   object name
+# Returns:
+#   none
+#########################
+kubectl_delete() {
+  if [[ -z "$1" ]]; then
+    log_error "Please make sure to pass namespace name argument to kubectl_delete() function."
+    exit 1
+  fi
+
+  if [[ -z "$2" ]]; then
+    log_error "Please make sure to pass object type argument to kubectl_delete() function."
+    exit 1
+  fi
+
+  if [[ -z "$3" ]]; then
+    log_error "Please make sure to pass object name argument to kubectl_delete() function."
+    exit 1
+  fi
+
+  local namespace_name=$1
+  local object_type=$2
+  local object_name=$3
+
+  log_info "Removing ${object_type} ${object_name} in ${namespace_name} namespace if exists..."
+
+  local kubectl_delete_command=""
+  kubectl_delete_command=$(2>&1 microk8s kubectl delete "${object_type}" "${object_name}" -n"${namespace_name}")
+
+  if [[ "$?" -ne 0 ]]; then
+    log_warn "${kubectl_delete_command}"
+  else
+    log_success "${kubectl_delete_command}"
+  fi
+}
+
+########################
+# Applies a given file or directory using kubectl command
+# Arguments:
+#   namespace name
+#   flag (f for files or k for directories)
+#   path
+# Returns:
+#   none
+#########################
+kubectl_apply() {
+  if [[ -z "$1" ]]; then
+    log_error "Please make sure to pass namespace name argument to kubectl_apply() function."
+    exit 1
+  fi
+
+  if [[ -z "$2" ]]; then
+    log_error "Please make sure to pass flag argument to kubectl_apply() function."
+    exit 1
+  fi
+
+  if [[ -z "$3" ]]; then
+    log_error "Please make sure to pass path argument to kubectl_apply() function."
+    exit 1
+  fi
+
+  local namespace_name=$1
+  local kubectl_flag=$2
+  local resource_path=$3
+
+  log_info "Running 'kubectl apply -${kubectl_flag} ${resource_path} --namespace ${namespace_name}' command..."
+
+  local kubectl_apply_command=""
+  kubectl_apply_command=$(2>&1 microk8s kubectl apply -"${kubectl_flag}" "${resource_path}" --namespace "${namespace_name}")
+
+  if [[ "$?" -ne 0 ]]; then
+    log_error "$kubectl_apply_command"
+    log_error "Unable to run kubectl apply command, terminating script."
+    exit 1
+  fi
+
+  log_success "$kubectl_apply_command"
 }
 
 ########################

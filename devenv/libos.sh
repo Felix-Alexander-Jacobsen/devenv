@@ -83,7 +83,7 @@ snap_service_status() {
   local service_name="$2"
 
   local snap_service_status_lookup=""
-  snap_service_status_lookup=$(2>&1 sudo snap services | grep "$service_name" | awk '{print $3}')
+  snap_service_status_lookup=$(2>&1 snap services | grep "$service_name" | awk '{print $3}')
 
   if [[ "$?" -ne 0 ]]; then
     log_error "$snap_service_status_lookup"
@@ -130,4 +130,32 @@ spin() {
 #########################
 finish_spin() {
    printf "\r%s\n" "$@"
+}
+
+########################
+# Checks if file exists
+# Arguments:
+#   file existence placeholder
+#   path to file
+# Returns:
+#   'true' if file exists, 'false' otherwise
+#########################
+does_file_exist() {
+  if [[ -z "$1" ]]; then
+    log_error "Please make sure to pass file existence placeholder argument to does_file_exist() function."
+    exit 1
+  fi
+
+  if [[ -z "$2" ]]; then
+    log_error "Please make sure to pass path to file argument to does_file_exist() function."
+    exit 1
+  fi
+
+  local path_to_file="$2"
+
+  if [[ -f "$path_to_file" ]]; then
+    eval "$1='true'"
+  else
+    eval "$1='false'"
+  fi
 }

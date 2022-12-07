@@ -29,6 +29,7 @@ PLUGIN_NAMESPACES=("kube-system" "kube-system" "kube-system" "container-registry
 
 SLOW_MOTION_TEXT=${SLOW_MOTION_TEXT:-true}
 MICROK8S_VERSION=${MICROK8S_VERSION:-"1.23"}
+MONGODB_VERSION=${MONGODB_VERSION:-"6.0.3"}
 LOADBALANCER_NUM_OF_IP_ADDRESSES=${LOADBALANCER_NUM_OF_IP_ADDRESSES:-16}
 KONG_ENABLED=${KONG_ENABLED:-true}
 DASHBOARD_DOMAIN=${DASHBOARD_DOMAIN:-k8s.devenv.dev}
@@ -57,9 +58,11 @@ fi
 . ./devenv/libk8s.sh      # interaction with Kubernetes
 . ./devenv/libhelm.sh     # interaction with Helm
 . ./devenv/libcurl.sh     # wrapper around cURL binary
+. ./devenv/libgit.sh      # wrapper around git binary
 . ./devenv/libos.sh       # update_etc_hosts
 . ./devenv/libflows.sh    # run_flow
 . ./devenv/libkafka.sh    # run_kafka_flow
+. ./devenv/libmongodb.sh  # run_mongodb_flow
 
 print_welcome
 
