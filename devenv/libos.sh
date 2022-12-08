@@ -46,18 +46,19 @@ update_etc_hosts() {
 
   local entry_to_update="$1"
   local new_address="$2"
+  local escaped_entry_to_update=$(echo "${entry_to_update}" | sed 's/\$//')
 
-  log_info "Updating /etc/hosts '${entry_to_update}' entry to '${new_address}'..."
+  log_info "Updating /etc/hosts '${escaped_entry_to_update}' entry to '${new_address}'..."
 
   local etc_hosts_update=""
-  etc_hosts_update=$(2>&1 sed -i "s/.*$entry_to_update/$new_address\t$entry_to_update/g" /etc/hosts)
+  etc_hosts_update=$(2>&1 sed -i "s/.*$entry_to_update/$new_address\t$escaped_entry_to_update/g" /etc/hosts)
 
   if [[ "$?" -ne 0 ]]; then
     log_error "$etc_hosts_update"
     log_error "Unable to edit /etc/hosts, terminating script."
     exit 1
   else
-    log_success "/etc/hosts '${entry_to_update}' entry updated successfully to ${new_address}."
+    log_success "/etc/hosts '${escaped_entry_to_update}' entry updated successfully to ${new_address}."
   fi
 }
 

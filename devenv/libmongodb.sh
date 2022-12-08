@@ -121,10 +121,10 @@ install_mongodb() {
   microk8s kubectl get MongoDBCommunity --namespace mongodb
   microk8s kubectl get pod --namespace mongodb
 
-  log_info "Creating MongoDB LoadBalancer service..."
+  log_info "Creating MongoDB LoadBalancer services..."
 
-  local mongodb_lb_create=""
-  mongodb_lb_create=$(2>&1 cat <<EOF | microk8s kubectl apply --namespace mongodb -f -
+  local mongodb_lb_general_create=""
+  mongodb_lb_general_create=$(2>&1 cat <<EOF | microk8s kubectl apply --namespace mongodb -f -
 apiVersion: v1
 kind: Service
 metadata:
@@ -143,18 +143,9 @@ spec:
 EOF
   )
 
-  if [[ "$?" -ne 0 ]]; then
-    if [[ mongodb_lb_create == *"AlreadyExists"* ]]; then
-      log_error "${mongodb_lb_create}"
-      log_error "Unable to create MongoDB loadbalancer object, terminating script."
-    else
-      log_error "${mongodb_lb_create}"
-      log_error "Unable to interact with the cluster, terminating script."
-      exit 1
-    fi
-  else
-    log_success "${mongodb_lb_create}"
-  fi
+  create_mongodb_lb "0"
+  create_mongodb_lb "1"
+  create_mongodb_lb "2"
 
   microk8s kubectl get svc -nmongodb
 
@@ -184,45 +175,54 @@ wait_for_mongodb_pods() {
 }
 
 ########################
-# Applies mongodb loadbalancer patch effectively assigning a new IP to a given mongodb external service
+# Creates mongodb external service using LoadBalancer
 # Arguments:
-#   mongodb service name
+#   mongodb instance number
 # Returns:
 #   none
 #########################
-apply_mongodb_lb_patch() {
-#  if [[ -z "$1" ]]; then
-#    log_error "Please make sure to pass kafka service name argument to apply_kafka_lb_patch() function."
-#    exit 1
-#  fi
+create_mongodb_lb() {
+  if [[ -z "$1" ]]; then
+    log_error "Please make sure to pass mongodb instance number argument to create_mongodb_lb() function."
+    exit 1
+  fi
 
-  local mongodb_svc_name="$1"
+  local instance="$1"
 
-  log_info "Refreshing '$mongodb_svc_name' service, asking loadbalancer to assign new IP..."
+  log_info "Creating mongodb LoadBalancer external service for instance no. '${instance}' service..."
 
-#  local null_lb_patch=""
-#  IFS='' read -r -d '' null_lb_patch <<"EOF"
-#spec:
-#  loadBalancerIP: null
-#EOF
+  local mongodb_lb_create=""
+  mongodb_lb_create=$(2>&1 cat <<EOF | microk8s kubectl apply --namespace mongodb -f -
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-ce-lb-svc-${instance}
+spec:
+  ports:
+  - name: mongodb
+    port: 27017
+    protocol: TCP
+    targetPort: 27017
+  publishNotReadyAddresses: true
+  selector:
+    statefulset.kubernetes.io/pod-name: mongodb-ce-${instance}
+  externalTrafficPolicy: Local
+  type: LoadBalancer
+EOF
+  )
 
-#  local kafka_lb_patch=""
-#  kafka_lb_patch=$(2>&1 microk8s kubectl patch svc "$kafka_svc_name" --patch "$(echo -e "${null_lb_patch}")" --namespace kafka)
-
-#  if [[ "$?" -ne 0 ]]; then
-#    log_error "$kafka_lb_patch"
-#    log_error "Unable to patch '$kafka_svc_name' svc, terminating script."
-#    exit 1
-#  else
-#    if [[ $kafka_lb_patch == *"no change"* ]]; then
-#      # do nothing
-#      kafka_lb_patch=""
-#    else
-#      log_success "$kafka_lb_patch"
-#      log_info "Waiting 10 seconds for new loadbalancer to assign new IP..."
-#      sleep 10
-#    fi
-#  fi
+  if [[ "$?" -ne 0 ]]; then
+    if [[ mongodb_lb_create == *"AlreadyExists"* ]]; then
+      log_error "${mongodb_lb_create}"
+      log_error "Unable to create MongoDB loadbalancer object, terminating script."
+    else
+      log_error "${mongodb_lb_create}"
+      log_error "Unable to interact with the cluster, terminating script."
+      exit 1
+    fi
+  else
+    log_success "${mongodb_lb_create}"
+  fi
 }
 
 ########################
@@ -245,6 +245,31 @@ bootstrap_mongodb() {
   wait_for_mongodb_pods 180
   get_mongodb_status mongodb_status
   log_info "$mongodb_status"
+}
+
+########################
+# Updates mongodb /etc/hosts entries
+# Arguments:
+#   none
+# Returns:
+#   none
+#########################
+update_mongodb_etc_hosts() {
+  local mongodb_ip=""
+  mongodb_ip=$(microk8s kubectl get svc mongodb-ce-lb-svc -nmongodb | grep LoadBalancer | awk '{print $4}')
+  update_etc_hosts "mongodb$" "${mongodb_ip}"
+
+  local mongodb_ip_0=""
+  mongodb_ip_0=$(microk8s kubectl get svc mongodb-ce-lb-svc-0 -nmongodb | grep LoadBalancer | awk '{print $4}')
+  update_etc_hosts "mongodb-ce-0.mongodb-ce-svc.mongodb.svc.cluster.local" "${mongodb_ip_0}"
+
+  local mongodb_ip_1=""
+  mongodb_ip_1=$(microk8s kubectl get svc mongodb-ce-lb-svc-1 -nmongodb | grep LoadBalancer | awk '{print $4}')
+  update_etc_hosts "mongodb-ce-1.mongodb-ce-svc.mongodb.svc.cluster.local" "${mongodb_ip_1}"
+
+  local mongodb_ip_2=""
+  mongodb_ip_2=$(microk8s kubectl get svc mongodb-ce-lb-svc-2 -nmongodb | grep LoadBalancer | awk '{print $4}')
+  update_etc_hosts "mongodb-ce-2.mongodb-ce-svc.mongodb.svc.cluster.local" "${mongodb_ip_2}"
 }
 
 ########################
@@ -288,9 +313,7 @@ refresh_mongodb() {
     exit 1
   fi
 
-  local mongodb_ip=""
-  mongodb_ip=$(microk8s kubectl get svc mongodb-ce-lb-svc -nmongodb | grep LoadBalancer | awk '{print $4}')
-  update_etc_hosts "mongodb" "${mongodb_ip}"
+  update_mongodb_etc_hosts
 
   log_success "MongoDB is running."
 
@@ -365,9 +388,7 @@ start_mongodb() {
     exit 1
   fi
 
-  local mongodb_ip=""
-  mongodb_ip=$(microk8s kubectl get svc mongodb-ce-lb-svc -nmongodb | grep LoadBalancer | awk '{print $4}')
-  update_etc_hosts "mongodb" "${mongodb_ip}"
+  update_mongodb_etc_hosts
 
   log_success "MongoDB has been started."
 
@@ -414,9 +435,7 @@ restart_mongodb() {
     exit 1
   fi
 
-  local mongodb_ip=""
-  mongodb_ip=$(microk8s kubectl get svc mongodb-ce-lb-svc -nmongodb | grep LoadBalancer | awk '{print $4}')
-  update_etc_hosts "mongodb" "${mongodb_ip}"
+  update_mongodb_etc_hosts
 
   log_success "MongoDB has been re-started."
 
