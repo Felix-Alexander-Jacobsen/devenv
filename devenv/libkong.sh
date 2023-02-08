@@ -53,7 +53,7 @@ refresh_kong_api_gateway() {
 
   if [[ $helm_deployment_exists == *"false"* ]]; then
     refresh_helm_repository "kong" "https://charts.konghq.com"
-    create_helm_deployment "kong" "api-gateway" "kong/kong" "--set ingressController.installCRDs=false --set admin.enabled=true --set admin.http.enabled=true --set admin.type='ClusterIP'"
+    create_helm_deployment "kong" "api-gateway" "kong/kong" "--version ${KONG_VERSION} --set ingressController.installCRDs=false --set admin.enabled=true --set admin.http.enabled=true --set admin.type='ClusterIP'"
   else
     log_info "Checking status of kong pods..."
     check_and_recreate_kong_deployment_if_necessary
@@ -102,7 +102,7 @@ recreate_kong_deployment() {
   microk8s kubectl delete namespace kong
   create_namespace "kong"
   refresh_helm_repository "kong" "https://charts.konghq.com"
-  create_helm_deployment "kong" "api-gateway" "kong/kong" "--set ingressController.installCRDs=false --set admin.enabled=true --set admin.http.enabled=true --set admin.type='ClusterIP'"
+  create_helm_deployment "kong" "api-gateway" "kong/kong" "--version ${KONG_VERSION} --set ingressController.installCRDs=false --set admin.enabled=true --set admin.http.enabled=true --set admin.type='ClusterIP'"
 }
 
 ########################
