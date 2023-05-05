@@ -1,7 +1,7 @@
 #!/bin/bash
 # The MIT License (MIT)
 #
-# Copyright (c) 2022 Felix Jacobsen
+# Copyright (c) 2022-2023 Felix Jacobsen
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy of
 # this software and associated documentation files (the "Software"), to deal in
@@ -34,10 +34,10 @@
 #########################
 get_version() {
   local major_version="1"
-  local minor_version="1"
-  local patch_version="1"
-  local timestamp_version="20230208T230312"
-  local build_version="7"
+  local minor_version="2"
+  local patch_version="0"
+  local timestamp_version="20230505T190437"
+  local build_version="8"
 
   local retver="$major_version.$minor_version.$patch_version-$timestamp_version.$build_version"
   echo "$retver"

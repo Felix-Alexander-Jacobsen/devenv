@@ -1,7 +1,7 @@
 #!/bin/bash
 # The MIT License (MIT)
 #
-# Copyright (c) 2022 Felix Jacobsen
+# Copyright (c) 2022-2023 Felix Jacobsen
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy of
 # this software and associated documentation files (the "Software"), to deal in
@@ -601,7 +601,7 @@ refresh_metallb_plugin() {
     else
       log_info "Verifying if metallb is configured with proper IP range $loadbalancer_ip_range_begin-$loadbalancer_ip_range_end"
 
-      metallb_verify=$(2>&1 microk8s kubectl describe cm config -nmetallb-system)
+      metallb_verify=$(2>&1 microk8s kubectl describe ipaddresspools.metallb.io/default-addresspool -nmetallb-system | grep Addresses -A1 | grep -v "^  Addresses" | awk '{print $1}')
 
       if [[ "$?" -ne 0 ]]; then
         if [[ $metallb_verify == *"NotFound"* ]]; then

@@ -1,7 +1,7 @@
 #!/bin/bash
 # The MIT License (MIT)
 #
-# Copyright (c) 2022 Felix Jacobsen
+# Copyright (c) 2022-2023 Felix Jacobsen
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy of
 # this software and associated documentation files (the "Software"), to deal in
@@ -45,6 +45,8 @@ get_mongodb_status() {
     log_warn "$mongodb_query"
     log_error "Please run this script as root or with sudo."
     exit 1
+  elif [[ $mongodb_query == *"error: the server doesn't have a resource type"* ]]; then
+    mongodb_query="error: the server"
   fi
 
   eval "$1='$mongodb_query'"
@@ -302,7 +304,7 @@ refresh_mongodb() {
     wait_for_mongodb_pods 180
     get_mongodb_status mongodb_status
     log_info "$mongodb_status"
-  elif [[ $mongodb_status == *"No resources found in mongodb namespace"* ]] || [[ $mongodb_status == *"Failed"* ]]; then
+  elif [[ $mongodb_status == *"No resources found in mongodb namespace"* ]] || [[ $mongodb_status == *"Failed"* ]] || [[ $mongodb_status == *"error: the server"* ]]; then
     log_warn "$mongodb_status"
     bootstrap_mongodb "$current_ip"
   elif [[ $mongodb_status == *"Running"* ]]; then

@@ -1,7 +1,7 @@
 #!/bin/bash
 # The MIT License (MIT)
 #
-# Copyright (c) 2022 Felix Jacobsen
+# Copyright (c) 2022-2023 Felix Jacobsen
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy of
 # this software and associated documentation files (the "Software"), to deal in
@@ -28,9 +28,9 @@ PLUGIN_PODS=("k8s-app=kube-dns" "k8s-app=kubernetes-dashboard" "k8s-app=hostpath
 PLUGIN_NAMESPACES=("kube-system" "kube-system" "kube-system" "container-registry" "kube-system" "metallb-system" "none")
 
 SLOW_MOTION_TEXT=${SLOW_MOTION_TEXT:-true}
-MICROK8S_VERSION=${MICROK8S_VERSION:-"1.23"}
-MONGODB_VERSION=${MONGODB_VERSION:-"6.0.3"}
-KONG_VERSION=${KONG_VERSION:-"2.16.2"}
+MICROK8S_VERSION=${MICROK8S_VERSION:-"1.25"}
+MONGODB_VERSION=${MONGODB_VERSION:-"6.0.5-ubuntu2204"}
+KONG_VERSION=${KONG_VERSION:-"2.20.1"}
 LOADBALANCER_NUM_OF_IP_ADDRESSES=${LOADBALANCER_NUM_OF_IP_ADDRESSES:-16}
 KONG_ENABLED=${KONG_ENABLED:-true}
 DASHBOARD_DOMAIN=${DASHBOARD_DOMAIN:-k8s.devenv.dev}
