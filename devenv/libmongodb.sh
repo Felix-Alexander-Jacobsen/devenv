@@ -107,6 +107,9 @@ install_mongodb() {
   microk8s kubectl get rolebinding --namespace mongodb
 
   log_info "Creating MongoDB Operator Deployment..."
+  # modify env vars and add:
+  # - name: MDB_IMAGE_TYPE
+  #   value: ubuntu2204
   kubectl_apply "mongodb" "f" "mongodb-kubernetes-operator/config/manager/manager.yaml"
   log_success "MongoDB Operator Deployment created successfully."
 

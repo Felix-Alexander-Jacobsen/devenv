@@ -84,7 +84,7 @@ install_kafka() {
   fi
 
   refresh_helm_repository "bitnami" "https://charts.bitnami.com/bitnami"
-  create_helm_deployment "kafka" "kafka" "bitnami/kafka" "--set replicaCount=3 --set externalAccess.enabled=true --set externalAccess.service.port=9092 --set externalAccess.service.loadBalancerIPs[0]=$kafka_first_ip --set externalAccess.service.loadBalancerIPs[1]=$kafka_second_ip --set externalAccess.service.loadBalancerIPs[2]=$kafka_third_ip"
+  create_helm_deployment "kafka" "kafka" "bitnami/kafka" "--set replicaCount=3 --set externalAccess.enabled=true --set externalAccess.controller.service.port=9092 --set externalAccess.controller.service.loadBalancerIPs[0]=$kafka_first_ip --set externalAccess.controller.service.loadBalancerIPs[1]=$kafka_second_ip --set externalAccess.controller.service.loadBalancerIPs[2]=$kafka_third_ip --version $KAFKA_VERSION"
 
   if [[ "$?" -ne 0 ]]; then
     log_error "Installation failed, terminating script."
@@ -107,10 +107,10 @@ wait_for_kafka_pods() {
 
   local timeout=$1
 
-  kubectl_wait_for_pod "kafka" "statefulset.kubernetes.io/pod-name=kafka-zookeeper-0" "$timeout"
-  kubectl_wait_for_pod "kafka" "statefulset.kubernetes.io/pod-name=kafka-0" "$timeout"
-  kubectl_wait_for_pod "kafka" "statefulset.kubernetes.io/pod-name=kafka-1" "$timeout"
-  kubectl_wait_for_pod "kafka" "statefulset.kubernetes.io/pod-name=kafka-2" "$timeout"
+  #kubectl_wait_for_pod "kafka" "statefulset.kubernetes.io/pod-name=kafka-zookeeper-0" "$timeout"
+  kubectl_wait_for_pod "kafka" "statefulset.kubernetes.io/pod-name=kafka-controller-0" "$timeout"
+  kubectl_wait_for_pod "kafka" "statefulset.kubernetes.io/pod-name=kafka-controller-1" "$timeout"
+  kubectl_wait_for_pod "kafka" "statefulset.kubernetes.io/pod-name=kafka-controller-2" "$timeout"
 }
 
 ########################
@@ -253,33 +253,33 @@ refresh_kafka_lb_svc() {
   log_success "Assuming that loadbalancer uses the following IP range: $loadbalancer_ip_range_begin-$loadbalancer_ip_range_end."
 
   local does_kafka_external_svc_has_correct_ip=""
-  verify_if_kafka_lb_svc_has_correct_ip does_kafka_external_svc_has_correct_ip "$loadbalancer_ip_range_begin" "$loadbalancer_ip_range_end" "kafka-0-external"
+  verify_if_kafka_lb_svc_has_correct_ip does_kafka_external_svc_has_correct_ip "$loadbalancer_ip_range_begin" "$loadbalancer_ip_range_end" "kafka-controller-0-external"
 
   if [[ $does_kafka_external_svc_has_correct_ip == "false" ]]; then
-    apply_kafka_lb_patch "kafka-0-external"
-    verify_if_kafka_lb_svc_has_correct_ip does_kafka_external_svc_has_correct_ip "$loadbalancer_ip_range_begin" "$loadbalancer_ip_range_end" "kafka-0-external"
+    apply_kafka_lb_patch "kafka-controller-0-external"
+    verify_if_kafka_lb_svc_has_correct_ip does_kafka_external_svc_has_correct_ip "$loadbalancer_ip_range_begin" "$loadbalancer_ip_range_end" "kafka-controller-0-external"
     if [[ $does_kafka_external_svc_has_correct_ip == "false" ]]; then
       log_error "Unable to reassign ip address to kafka svc - loadbalancer uses outdated configuration, please run 'microk8s refresh', terminating script."
       exit 1
     fi
   fi
 
-  verify_if_kafka_lb_svc_has_correct_ip does_kafka_external_svc_has_correct_ip "$loadbalancer_ip_range_begin" "$loadbalancer_ip_range_end" "kafka-1-external"
+  verify_if_kafka_lb_svc_has_correct_ip does_kafka_external_svc_has_correct_ip "$loadbalancer_ip_range_begin" "$loadbalancer_ip_range_end" "kafka-controller-1-external"
 
   if [[ $does_kafka_external_svc_has_correct_ip == "false" ]]; then
-    apply_kafka_lb_patch "kafka-1-external"
-    verify_if_kafka_lb_svc_has_correct_ip does_kafka_external_svc_has_correct_ip "$loadbalancer_ip_range_begin" "$loadbalancer_ip_range_end" "kafka-1-external"
+    apply_kafka_lb_patch "kafka-controller-1-external"
+    verify_if_kafka_lb_svc_has_correct_ip does_kafka_external_svc_has_correct_ip "$loadbalancer_ip_range_begin" "$loadbalancer_ip_range_end" "kafka-controller-1-external"
     if [[ $does_kafka_external_svc_has_correct_ip == "false" ]]; then
       log_error "Unable to reassign ip address to kafka svc - loadbalancer uses outdated configuration, please run 'microk8s refresh', terminating script."
       exit 1
     fi
   fi
 
-  verify_if_kafka_lb_svc_has_correct_ip does_kafka_external_svc_has_correct_ip "$loadbalancer_ip_range_begin" "$loadbalancer_ip_range_end" "kafka-2-external"
+  verify_if_kafka_lb_svc_has_correct_ip does_kafka_external_svc_has_correct_ip "$loadbalancer_ip_range_begin" "$loadbalancer_ip_range_end" "kafka-controller-2-external"
 
   if [[ $does_kafka_external_svc_has_correct_ip == "false" ]]; then
-    apply_kafka_lb_patch "kafka-2-external"
-    verify_if_kafka_lb_svc_has_correct_ip does_kafka_external_svc_has_correct_ip "$loadbalancer_ip_range_begin" "$loadbalancer_ip_range_end" "kafka-2-external"
+    apply_kafka_lb_patch "kafka-controller-2-external"
+    verify_if_kafka_lb_svc_has_correct_ip does_kafka_external_svc_has_correct_ip "$loadbalancer_ip_range_begin" "$loadbalancer_ip_range_end" "kafka-controller-2-external"
     if [[ $does_kafka_external_svc_has_correct_ip == "false" ]]; then
       log_error "Unable to reassign ip address to kafka svc - loadbalancer uses outdated configuration, please run 'microk8s refresh', terminating script."
       exit 1
@@ -300,8 +300,8 @@ verify_kafka_statefulsets_existence() {
     exit 1
   fi
 
-  local kafka_statefulset_exists=""
-  does_statefulset_exist kafka_statefulset_exists "kafka" "kafka-zookeeper"
+  local kafka_statefulset_exists="true"
+  #does_statefulset_exist kafka_statefulset_exists "kafka" "kafka-zookeeper"
 
   if [[ $kafka_statefulset_exists == "true" ]]; then
     does_statefulset_exist kafka_statefulset_exists "kafka" "kafka"
@@ -417,12 +417,12 @@ refresh_kafka() {
 #########################
 scale_kafka_statefulsets_down_to_zero() {
   microk8s kubectl scale statefulsets kafka --replicas=0 -nkafka
-  microk8s kubectl scale statefulsets kafka-zookeeper --replicas=0 -nkafka
+  #microk8s kubectl scale statefulsets kafka-zookeeper --replicas=0 -nkafka
   log_info "Waiting for kafka statefulsets to scale down to zero..."
-  microk8s kubectl wait --namespace kafka --for=delete pod/kafka-0 --timeout=180s
-  microk8s kubectl wait --namespace kafka --for=delete pod/kafka-1 --timeout=180s
-  microk8s kubectl wait --namespace kafka --for=delete pod/kafka-3 --timeout=180s
-  microk8s kubectl wait --namespace kafka --for=delete pod/kafka-zookeeper-0 --timeout=180s
+  microk8s kubectl wait --namespace kafka --for=delete pod/kafka-controller-0 --timeout=180s
+  microk8s kubectl wait --namespace kafka --for=delete pod/kafka-controller-1 --timeout=180s
+  microk8s kubectl wait --namespace kafka --for=delete pod/kafka-controller-3 --timeout=180s
+  #microk8s kubectl wait --namespace kafka --for=delete pod/kafka-zookeeper-0 --timeout=180s
 }
 
 ########################
@@ -433,7 +433,7 @@ scale_kafka_statefulsets_down_to_zero() {
 #   none
 #########################
 scale_kafka_statefulsets_up_to_normal() {
-  microk8s kubectl scale statefulsets kafka-zookeeper --replicas=1 -nkafka
+  #microk8s kubectl scale statefulsets kafka-zookeeper --replicas=1 -nkafka
   microk8s kubectl scale statefulsets kafka --replicas=3 -nkafka
   wait_for_kafka_pods 180
 }
