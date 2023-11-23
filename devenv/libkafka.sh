@@ -84,7 +84,7 @@ install_kafka() {
   fi
 
   refresh_helm_repository "bitnami" "https://charts.bitnami.com/bitnami"
-  create_helm_deployment "kafka" "kafka" "bitnami/kafka" "--set replicaCount=3 --set externalAccess.enabled=true --set externalAccess.controller.service.port=9092 --set externalAccess.controller.service.loadBalancerIPs[0]=$kafka_first_ip --set externalAccess.controller.service.loadBalancerIPs[1]=$kafka_second_ip --set externalAccess.controller.service.loadBalancerIPs[2]=$kafka_third_ip --version $KAFKA_VERSION"
+  create_helm_deployment "kafka" "kafka" "bitnami/kafka" "--set replicaCount=3 --set listeners.client.protocol=PLAINTEXT --set listeners.controller.protocol=PLAINTEXT --set listeners.interbroker.protocol=PLAINTEXT --set listeners.external.protocol=PLAINTEXT --set externalAccess.enabled=true --set externalAccess.controller.service.ports.external=9092 --set externalAccess.controller.service.loadBalancerIPs[0]=$kafka_first_ip --set externalAccess.controller.service.loadBalancerIPs[1]=$kafka_second_ip --set externalAccess.controller.service.loadBalancerIPs[2]=$kafka_third_ip --version $KAFKA_VERSION"
 
   if [[ "$?" -ne 0 ]]; then
     log_error "Installation failed, terminating script."
