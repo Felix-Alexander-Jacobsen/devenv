@@ -1,7 +1,7 @@
 #!/bin/bash
 # The MIT License (MIT)
 #
-# Copyright (c) 2022-2023 Felix Jacobsen
+# Copyright (c) 2022-2024 Felix Jacobsen
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy of
 # this software and associated documentation files (the "Software"), to deal in
@@ -391,12 +391,13 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   annotations:
-    kubernetes.io/ingress.class: kong
     konghq.com/protocol: "https"
     konghq.com/protocols: "https"
+    konghq.com/https-redirect-status-code: "302"
   name: ${ingress_name}
   namespace: ${namespace_name}
 spec:
+  ingressClassName: kong
   tls:
     - hosts:
         - ${DASHBOARD_DOMAIN}
@@ -412,18 +413,6 @@ spec:
             name: ${service_name}
             port:
              number: 443
----
-apiVersion: configuration.konghq.com/v1
-kind: KongIngress
-metadata:
-  name: ${service_name}
-  namespace: ${namespace_name}
-proxy:
-  protocol: https
-route:
-  https_redirect_status_code: 301
-  protocols:
-  - https
 EOF
   )
   else

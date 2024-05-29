@@ -1,7 +1,7 @@
 #!/bin/bash
 # The MIT License (MIT)
 #
-# Copyright (c) 2022-2023 Felix Jacobsen
+# Copyright (c) 2022-2024 Felix Jacobsen
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy of
 # this software and associated documentation files (the "Software"), to deal in
@@ -483,7 +483,11 @@ refresh_microk8s_plugin() {
     log_warn "microk8s plugin '$plugin_name' is disabled, enabling it now..."
 
     local plugin_enable=""
-    plugin_enable=$(2>&1 microk8s enable "$plugin_name")
+    if [[ "$plugin_name" == "kube-ovn" ]]; then
+      plugin_enable=$(2>&1 microk8s enable "$plugin_name" --force)
+    else
+      plugin_enable=$(2>&1 microk8s enable "$plugin_name")
+    fi
 
     if [[ "$?" -ne 0 ]]; then
       log_error "$plugin_enable"
@@ -512,6 +516,16 @@ refresh_microk8s_plugin() {
       finish_spin
 
       log_success "microk8s plugin '$plugin_name' started."
+
+      if [[ "$plugin_name" == "kube-ovn" ]]; then
+        disable_dns_plugin=$(2>&1 microk8s disable dns)
+        if [[ "$?" -ne 0 ]]; then
+          log_error "$disable_dns_plugin"
+          log_error "Unable to disable dns plugin after activating kube-ovn plugin, terminating script."
+          exit 1
+        fi
+        echo "${disable_dns_plugin}"
+      fi
     fi
   else
     plugin_status=$(2>&1 microk8s status -a "$plugin_name" --wait-ready)
