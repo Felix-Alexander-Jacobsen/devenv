@@ -24,14 +24,17 @@
 
 declare -a PLUGINS
 PLUGINS=("kube-ovn" "dns" "dashboard" "storage" "registry" "metrics-server" "metallb" "helm3")
-PLUGIN_PODS=("app=ovs" "k8s-app=kube-dns" "k8s-app=kubernetes-dashboard" "k8s-app=hostpath-provisioner" "app=registry" "k8s-app=metrics-server" "app=metallb" "none")
-PLUGIN_NAMESPACES=("kube-system" "kube-system" "kube-system" "kube-system" "container-registry" "kube-system" "metallb-system" "none")
+PLUGIN_PODS=("app=ovs" "k8s-app=kube-dns" "app.kubernetes.io/instance=kubernetes-dashboard" "k8s-app=hostpath-provisioner" "app=registry" "k8s-app=metrics-server" "app=metallb" "none")
+PLUGIN_NAMESPACES=("kube-system" "kube-system" "kubernetes-dashboard" "kube-system" "container-registry" "kube-system" "metallb-system" "none")
 
 SLOW_MOTION_TEXT=${SLOW_MOTION_TEXT:-true}
-MICROK8S_VERSION=${MICROK8S_VERSION:-"1.31"}
-MONGODB_VERSION=${MONGODB_VERSION:-"7.0.9"}
-KONG_VERSION=${KONG_VERSION:-"2.48.0"}
-KAFKA_VERSION=${KAFKA_VERSION:-"32.2.7"}
+MICROK8S_VERSION=${MICROK8S_VERSION:-"1.33"}
+PERCONA_OPERATOR_VERSION=${PERCONA_OPERATOR_VERSION:-"1.21.2"}
+PERCONA_DB_VERSION=${PERCONA_DB_VERSION:-"1.21.1"}
+PERCONA_MONGODB_VERSION=${PERCONA_MONGODB_VERSION:-"8.0.12-4"}
+KONG_VERSION=${KONG_VERSION:-"3.0.1"}
+STRIMZI_VERSION=${STRIMZI_VERSION:-"0.49.1"}
+KAFKA_VERSION=${KAFKA_VERSION:-"4.0.0"}
 LOADBALANCER_NUM_OF_IP_ADDRESSES=${LOADBALANCER_NUM_OF_IP_ADDRESSES:-16}
 KONG_ENABLED=${KONG_ENABLED:-true}
 DASHBOARD_DOMAIN=${DASHBOARD_DOMAIN:-k8s.devenv.dev}

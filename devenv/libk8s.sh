@@ -684,21 +684,23 @@ setup_k8s_dashboard() {
   fi
 
   local ingress_ip="$1"
+  local dashboard_namespace="kubernetes-dashboard"
+  local dashboard_service="kubernetes-dashboard-kong-proxy"
 
   log_info "Setting up Kubernetes dashboard..."
 
   local secret_exists=""
-  does_secret_exist secret_exists "kube-system" "ingress-tls-secrets"
+  does_secret_exist secret_exists "${dashboard_namespace}" "ingress-tls-secrets"
 
   if [[ $secret_exists == *"false"* ]]; then
-    create_secret "kube-system" "ingress-tls-secrets" "tls" "--key=./certificates/${DASHBOARD_CERTIFICATE}-domain.key --cert=./certificates/${DASHBOARD_CERTIFICATE}-domain.crt"
+    create_secret "${dashboard_namespace}" "ingress-tls-secrets" "tls" "--key=./certificates/${DASHBOARD_CERTIFICATE}-domain.key --cert=./certificates/${DASHBOARD_CERTIFICATE}-domain.crt"
   fi
 
   local ingress_exists=""
-  does_ingress_exist ingress_exists "kube-system" "dashboard"
+  does_ingress_exist ingress_exists "${dashboard_namespace}" "dashboard"
 
   if [[ $ingress_exists == *"false"* ]]; then
-    create_tls_ingress_https_backend "kube-system" "dashboard" "ingress-tls-secrets" "kubernetes-dashboard"
+    create_tls_ingress_https_backend "${dashboard_namespace}" "dashboard" "ingress-tls-secrets" "${dashboard_service}"
   fi
 
   if [[ $KONG_ENABLED == "true" ]]; then
@@ -711,7 +713,7 @@ metadata:
 EOF
 
     local kong_https_patch=""
-    kong_https_patch=$(2>&1 microk8s kubectl patch svc kubernetes-dashboard --patch "$(echo -e "${annotations_patch}")" --namespace kube-system)
+    kong_https_patch=$(2>&1 microk8s kubectl patch svc "${dashboard_service}" --patch "$(echo -e "${annotations_patch}")" --namespace "${dashboard_namespace}")
 
     if [[ "$?" -ne 0 ]]; then
       log_error "$kong_https_patch"

@@ -20,17 +20,22 @@
 # IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #
-# Library for interactions with mongodb
+# Library for managing MongoDB using Percona Operator
 
-# Load required libraries
-#. ./liblog.sh # logInfo
+# Percona Helm repository configuration
+PERCONA_HELM_REPO="https://percona.github.io/percona-helm-charts/"
+PERCONA_HELM_REPO_NAME="percona"
+MONGODB_NAMESPACE="mongodb"
+MONGODB_RELEASE_NAME="mongodb"
+# Note: psmdb-db chart creates CR named {release}-psmdb-db
+MONGODB_CR_NAME="mongodb-psmdb-db"
 
 ########################
-# Gets mongodb status
+# Gets mongodb cluster status
 # Arguments:
-#   mongodb status placeholder
+#   status placeholder
 # Returns:
-#   mongodb status
+#   mongodb status string
 #########################
 get_mongodb_status() {
   if [[ -z "$1" ]]; then
@@ -39,217 +44,239 @@ get_mongodb_status() {
   fi
 
   local mongodb_query=""
-  mongodb_query=$(2>&1 microk8s kubectl get mongodbcommunity.mongodbcommunity.mongodb.com -nmongodb)
+  mongodb_query=$(microk8s kubectl get psmdb "$MONGODB_CR_NAME" -n"$MONGODB_NAMESPACE" -o jsonpath='{.status.state}' 2>&1)
 
   if [[ $mongodb_query == *"Insufficient permissions to access MicroK8s"* ]]; then
     log_warn "$mongodb_query"
     log_error "Please run this script as root or with sudo."
     exit 1
+  elif [[ $mongodb_query == *"NotFound"* ]] || [[ $mongodb_query == *"not found"* ]]; then
+    mongodb_query="not_found"
   elif [[ $mongodb_query == *"error: the server doesn't have a resource type"* ]]; then
-    mongodb_query="error: the server"
+    mongodb_query="no_crd"
   fi
 
-  eval "$1='$mongodb_query'"
+  # Use printf to safely assign value (avoids eval quoting issues)
+  printf -v "$1" '%s' "$mongodb_query"
 }
 
 ########################
-# Installs mongodb
+# Checks if Percona operator is installed
 # Arguments:
-#   none
+#   result placeholder
 # Returns:
-#   none
+#   true or false
 #########################
-install_mongodb() {
-  local namespace_exists=""
-  does_namespace_exist namespace_exists "mongodb"
-
-  if [[ $namespace_exists == *"false"* ]]; then
-    create_namespace "mongodb"
+is_percona_operator_installed() {
+  if [[ -z "$1" ]]; then
+    log_error "Please make sure to pass a placeholder argument to is_percona_operator_installed() function."
+    exit 1
   fi
 
-  log_info "Installing MongoDB in mongodb namespace..."
+  local operator_check=""
+  operator_check=$(microk8s kubectl get deployment -n"$MONGODB_NAMESPACE" -l app.kubernetes.io/name=psmdb-operator 2>&1)
 
-  log_info "Checking if 'mongodb-kubernetes-operator/config/crd/bases/mongodbcommunity.mongodb.com_mongodbcommunity.yaml' file exists..."
-
-  local mongodb_crd_exists=""
-  does_file_exist mongodb_crd_exists "mongodb-kubernetes-operator/config/crd/bases/mongodbcommunity.mongodb.com_mongodbcommunity.yaml"
-
-  if [[ $mongodb_crd_exists == *"false"* ]]; then
-    log_warn "'mongodb-kubernetes-operator/config/crd/bases/mongodbcommunity.mongodb.com_mongodbcommunity.yaml' file does not exist, git repository will be cloned."
-    git_clone "https://github.com/mongodb/mongodb-kubernetes-operator.git"
+  if [[ $operator_check == *"No resources found"* ]] || [[ $operator_check == *"NotFound"* ]]; then
+    printf -v "$1" '%s' "false"
   else
-    log_success "'mongodb-kubernetes-operator/config/crd/bases/mongodbcommunity.mongodb.com_mongodbcommunity.yaml' file exists, git repository will be updated."
-    git_pull "mongodb-kubernetes-operator"
+    printf -v "$1" '%s' "true"
   fi
-
-  kubectl_delete "mongodb" "MongoDBCommunity" "mongodb-ce"
-  kubectl_delete "mongodb" "deployment" "mongodb-kubernetes-operator"
-  kubectl_delete "mongodb" "rolebinding.rbac.authorization.k8s.io" "mongodb-kubernetes-operator"
-  kubectl_delete "mongodb" "rolebinding.rbac.authorization.k8s.io" "mongodb-database"
-  kubectl_delete "mongodb" "role.rbac.authorization.k8s.io" "mongodb-kubernetes-operator"
-  kubectl_delete "mongodb" "role.rbac.authorization.k8s.io" "mongodb-database"
-  kubectl_delete "mongodb" "serviceaccount" "mongodb-kubernetes-operator"
-  kubectl_delete "mongodb" "serviceaccount" "mongodb-database"
-  kubectl_delete_crd "mongodbcommunity.mongodbcommunity.mongodb.com"
-
-  log_info "Creating MongoDB Custom Resource Definitions..."
-  kubectl_apply "default" "f" "mongodb-kubernetes-operator/config/crd/bases/mongodbcommunity.mongodb.com_mongodbcommunity.yaml"
-  log_success "MongoDB CRD created successfully."
-
-  microk8s kubectl get crd/mongodbcommunity.mongodbcommunity.mongodb.com
-
-  log_info "Creating MongoDB Operator's Roles and Role Bindings..."
-  kubectl_apply "mongodb" "k" "mongodb-kubernetes-operator/config/rbac/"
-  log_success "MongoDB Operator's Roles and Role Bindings created successfully."
-
-  microk8s kubectl get serviceaccount --namespace mongodb
-  microk8s kubectl get role --namespace mongodb
-  microk8s kubectl get rolebinding --namespace mongodb
-
-  log_info "Creating MongoDB Operator Deployment..."
-  # modify env vars and add:
-  # - name: MDB_IMAGE_TYPE
-  #   value: ubuntu2204
-  kubectl_apply "mongodb" "f" "mongodb-kubernetes-operator/config/manager/manager.yaml"
-  log_success "MongoDB Operator Deployment created successfully."
-
-  kubectl_wait_for_pod "mongodb" "name=mongodb-kubernetes-operator" "180"
-
-  microk8s kubectl get deployment --namespace mongodb
-
-  log_info "Creating MongoDB CE StatefulSet..."
-
-  scale_mongodb_statefulsets_up_to_normal
-
-  log_success "MongoDB CE StatefulSet created successfully."
-
-  microk8s kubectl get MongoDBCommunity --namespace mongodb
-  microk8s kubectl get pod --namespace mongodb
-
-  log_info "Creating MongoDB LoadBalancer services..."
-
-  local mongodb_lb_general_create=""
-  mongodb_lb_general_create=$(2>&1 cat <<EOF | microk8s kubectl apply --namespace mongodb -f -
-apiVersion: v1
-kind: Service
-metadata:
-  name: mongodb-ce-lb-svc
-spec:
-  ports:
-  - name: mongodb
-    port: 27017
-    protocol: TCP
-    targetPort: 27017
-  publishNotReadyAddresses: true
-  selector:
-    app: mongodb-ce-svc
-  sessionAffinity: None
-  type: LoadBalancer
-EOF
-  )
-
-  create_mongodb_lb "0"
-  create_mongodb_lb "1"
-  create_mongodb_lb "2"
-
-  microk8s kubectl get svc -nmongodb
-
-  log_success "MongoDB has been installed."
-
-  newline
 }
 
 ########################
-# Waits for mongodb pods to be ready
+# Installs Percona operator using Helm
 # Arguments:
-#   timeout in seconds
+#   none
 # Returns:
 #   none
 #########################
-wait_for_mongodb_pods() {
-  if [[ -z "$1" ]]; then
-    log_error "Please make sure to pass timeout in seconds argument to wait_for_mongodb_pods() function."
+install_percona_operator() {
+  log_info "Installing Percona MongoDB operator version ${PERCONA_OPERATOR_VERSION}..."
+
+  # Check if namespace exists
+  log_info "Checking if '$MONGODB_NAMESPACE' namespace exists..."
+  local namespace_check=""
+  namespace_check=$(microk8s kubectl get namespace "$MONGODB_NAMESPACE" 2>&1)
+
+  if [[ $namespace_check == *"NotFound"* ]] || [[ $namespace_check == *"not found"* ]]; then
+    log_info "Creating namespace '$MONGODB_NAMESPACE'..."
+    microk8s kubectl create namespace "$MONGODB_NAMESPACE"
+    log_success "namespace/$MONGODB_NAMESPACE created"
+  fi
+
+  # Add Percona Helm repo if not present
+  if ! microk8s helm3 repo list 2>/dev/null | grep -q "$PERCONA_HELM_REPO_NAME"; then
+    microk8s helm3 repo add "$PERCONA_HELM_REPO_NAME" "$PERCONA_HELM_REPO"
+  fi
+  microk8s helm3 repo update
+
+  # Clean up any failed release before fresh install
+  local release_status=""
+  release_status=$(microk8s helm3 status psmdb-operator -n"$MONGODB_NAMESPACE" -o json 2>/dev/null | grep -o '"status":"[^"]*"' | head -1 || echo "")
+  if [[ "$release_status" == *"failed"* ]] || [[ "$release_status" == *"pending"* ]]; then
+    log_info "Cleaning up failed/pending Helm release..."
+    microk8s helm3 uninstall psmdb-operator -n"$MONGODB_NAMESPACE" 2>/dev/null || true
+    sleep 2
+  fi
+
+  # Install Percona operator
+  local install_result=""
+  install_result=$(microk8s helm3 install psmdb-operator "$PERCONA_HELM_REPO_NAME/psmdb-operator" \
+    --namespace "$MONGODB_NAMESPACE" \
+    --version "$PERCONA_OPERATOR_VERSION" \
+    --set watchNamespaces="$MONGODB_NAMESPACE" \
+    --set disableTelemetry=true \
+    --wait 2>&1)
+
+  local helm_exit_code=$?
+
+  # Check if the actual deployment exists regardless of Helm exit code
+  if ! microk8s kubectl get deployment -n"$MONGODB_NAMESPACE" -l app.kubernetes.io/name=psmdb-operator &>/dev/null; then
+    log_error "$install_result"
+    log_error "Failed to install Percona operator, terminating script."
     exit 1
   fi
 
-  local timeout=$1
+  log_info "Waiting for Percona operator deployment to be ready..."
+  if ! microk8s kubectl wait --for=condition=Available deployment -l app.kubernetes.io/name=psmdb-operator -n"$MONGODB_NAMESPACE" --timeout=120s 2>&1; then
+    log_error "Percona operator deployment failed to become ready."
+    exit 1
+  fi
 
-  kubectl_wait_for_pod "mongodb" "statefulset.kubernetes.io/pod-name=mongodb-ce-0" "$timeout"
-  kubectl_wait_for_pod "mongodb" "statefulset.kubernetes.io/pod-name=mongodb-ce-1" "$timeout"
-  kubectl_wait_for_pod "mongodb" "statefulset.kubernetes.io/pod-name=mongodb-ce-2" "$timeout"
+  log_success "Percona operator installed successfully."
 }
 
 ########################
-# Creates mongodb external service using LoadBalancer
+# Deploys MongoDB cluster using Percona Helm chart
 # Arguments:
-#   mongodb instance number
+#   highest ip assigned by loadbalancer
 # Returns:
 #   none
 #########################
-create_mongodb_lb() {
+deploy_mongodb_cluster() {
   if [[ -z "$1" ]]; then
-    log_error "Please make sure to pass mongodb instance number argument to create_mongodb_lb() function."
+    log_error "Please make sure to pass the highest ip assigned by loadbalancer argument to deploy_mongodb_cluster() function."
     exit 1
   fi
 
-  local instance="$1"
+  local last_ip_assigned_by_lb=$1
 
-  log_info "Creating mongodb LoadBalancer external service for instance no. '${instance}' service..."
+  # Calculate 4 IPs: 1 for general LB + 3 for replica set members
+  local mongodb_lb_ip=""
+  calculate_next_ip mongodb_lb_ip "$last_ip_assigned_by_lb"
 
-  local mongodb_lb_create=""
-  mongodb_lb_create=$(2>&1 cat <<EOF | microk8s kubectl apply --namespace mongodb -f -
-apiVersion: v1
-kind: Service
-metadata:
-  name: mongodb-ce-lb-svc-${instance}
-spec:
-  ports:
-  - name: mongodb
-    port: 27017
-    protocol: TCP
-    targetPort: 27017
-  publishNotReadyAddresses: true
-  selector:
-    statefulset.kubernetes.io/pod-name: mongodb-ce-${instance}
-  externalTrafficPolicy: Local
-  type: LoadBalancer
-EOF
-  )
+  log_info "Deploying MongoDB cluster with LoadBalancer IP: $mongodb_lb_ip..."
+
+  # Clean up any failed release before fresh install
+  local release_status=""
+  release_status=$(microk8s helm3 status "$MONGODB_RELEASE_NAME" -n"$MONGODB_NAMESPACE" -o json 2>/dev/null | grep -o '"status":"[^"]*"' | head -1 || echo "")
+  if [[ "$release_status" == *"failed"* ]] || [[ "$release_status" == *"pending"* ]]; then
+    log_info "Cleaning up failed/pending Helm release..."
+    microk8s helm3 uninstall "$MONGODB_RELEASE_NAME" -n"$MONGODB_NAMESPACE" 2>/dev/null || true
+    sleep 2
+  fi
+
+  # Install MongoDB cluster using Helm
+  # - Disable sharding for simpler dev environment
+  # - Use 3-node replica set
+  # - Expose via LoadBalancer
+  local install_result=""
+  install_result=$(microk8s helm3 install "$MONGODB_RELEASE_NAME" "$PERCONA_HELM_REPO_NAME/psmdb-db" \
+    --namespace "$MONGODB_NAMESPACE" \
+    --version "$PERCONA_DB_VERSION" \
+    --set "image.tag=${PERCONA_MONGODB_VERSION}" \
+    --set "sharding.enabled=false" \
+    --set "replsets.rs0.size=3" \
+    --set "replsets.rs0.expose.enabled=true" \
+    --set "replsets.rs0.expose.type=LoadBalancer" \
+    --set "replsets.rs0.affinity.antiAffinityTopologyKey=none" \
+    --set "replsets.rs0.resources.limits.cpu=1" \
+    --set "replsets.rs0.resources.limits.memory=2Gi" \
+    --set "replsets.rs0.resources.requests.cpu=300m" \
+    --set "replsets.rs0.resources.requests.memory=500Mi" \
+    --set "replsets.rs0.volumeSpec.pvc.storageClassName=microk8s-hostpath" \
+    --set "replsets.rs0.volumeSpec.pvc.resources.requests.storage=5Gi" \
+    --set "backup.enabled=false" \
+    2>&1)
 
   if [[ "$?" -ne 0 ]]; then
-    if [[ mongodb_lb_create == *"AlreadyExists"* ]]; then
-      log_error "${mongodb_lb_create}"
-      log_error "Unable to create MongoDB loadbalancer object, terminating script."
-    else
-      log_error "${mongodb_lb_create}"
-      log_error "Unable to interact with the cluster, terminating script."
+    # Check if cluster CR was still created
+    if ! microk8s kubectl get psmdb "$MONGODB_CR_NAME" -n"$MONGODB_NAMESPACE" &>/dev/null; then
+      log_error "$install_result"
+      log_error "Failed to deploy MongoDB cluster, terminating script."
       exit 1
     fi
-  else
-    log_success "${mongodb_lb_create}"
   fi
+
+  log_success "MongoDB cluster deployed successfully."
 }
 
 ########################
-# Bootstraps mongodb: installs mongodb, waits until it starts and then retrieves its status
+# Waits for MongoDB cluster to be ready
 # Arguments:
-#   current ip address
+#   timeout in seconds (default 300)
 # Returns:
 #   none
 #########################
-bootstrap_mongodb() {
-  if [[ -z "$1" ]]; then
-    log_error "Please make sure to pass current ip argument to bootstrap_mongodb() function."
-    exit 1
+wait_for_mongodb_cluster() {
+  local timeout=${1:-300}
+  local elapsed=0
+  local interval=10
+
+  log_info "Waiting for MongoDB cluster to be ready (max ${timeout}s)..."
+
+  while [[ $elapsed -lt $timeout ]]; do
+    local status=""
+    get_mongodb_status status
+
+    microk8s kubectl get pods -n"$MONGODB_NAMESPACE" -l app.kubernetes.io/instance="$MONGODB_CR_NAME" 2>/dev/null || true
+
+    if [[ "$status" == "ready" ]]; then
+      log_success "MongoDB cluster is ready."
+      return 0
+    elif [[ "$status" == "error" ]] || [[ "$status" == "failed" ]]; then
+      log_error "MongoDB cluster entered error state: $status"
+      return 1
+    fi
+
+    sleep $interval
+    elapsed=$((elapsed + interval))
+    log_info "Still waiting... (${elapsed}s/${timeout}s) - Status: $status"
+  done
+
+  log_error "Timeout waiting for MongoDB cluster to be ready."
+  return 1
+}
+
+########################
+# Gets MongoDB connection credentials
+# Arguments:
+#   none
+# Returns:
+#   prints connection info
+#########################
+get_mongodb_credentials() {
+  log_info "MongoDB connection information:"
+
+  local secret_name="${MONGODB_CR_NAME}-secrets"
+
+  if microk8s kubectl get secret "$secret_name" -n"$MONGODB_NAMESPACE" &>/dev/null; then
+    local admin_user="userAdmin"
+    local admin_pass=""
+    admin_pass=$(microk8s kubectl get secret "$secret_name" -n"$MONGODB_NAMESPACE" -o jsonpath='{.data.MONGODB_USER_ADMIN_PASSWORD}' 2>/dev/null | base64 -d)
+
+    local cluster_admin_pass=""
+    cluster_admin_pass=$(microk8s kubectl get secret "$secret_name" -n"$MONGODB_NAMESPACE" -o jsonpath='{.data.MONGODB_CLUSTER_ADMIN_PASSWORD}' 2>/dev/null | base64 -d)
+
+    echo "  User Admin: userAdmin / $admin_pass"
+    echo "  Cluster Admin: clusterAdmin / $cluster_admin_pass"
+  else
+    log_warn "Secrets not found yet. They will be created when the cluster initializes."
   fi
 
-  local current_ip="$1"
-  local mongodb_status=""
-
-  install_mongodb
-  wait_for_mongodb_pods 180
-  get_mongodb_status mongodb_status
-  log_info "$mongodb_status"
+  # Get LoadBalancer IPs
+  log_info "MongoDB LoadBalancer services:"
+  microk8s kubectl get svc -n"$MONGODB_NAMESPACE" -l app.kubernetes.io/instance="$MONGODB_CR_NAME" | grep LoadBalancer || true
 }
 
 ########################
@@ -260,25 +287,51 @@ bootstrap_mongodb() {
 #   none
 #########################
 update_mongodb_etc_hosts() {
+  # Get the first replica set member's LoadBalancer IP for general access
   local mongodb_ip=""
-  mongodb_ip=$(microk8s kubectl get svc mongodb-ce-lb-svc -nmongodb | grep LoadBalancer | awk '{print $4}')
-  update_etc_hosts "mongodb$" "${mongodb_ip}"
+  mongodb_ip=$(microk8s kubectl get svc -n"$MONGODB_NAMESPACE" -l "app.kubernetes.io/instance=$MONGODB_CR_NAME,app.kubernetes.io/component=mongod" -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}' 2>/dev/null)
 
-  local mongodb_ip_0=""
-  mongodb_ip_0=$(microk8s kubectl get svc mongodb-ce-lb-svc-0 -nmongodb | grep LoadBalancer | awk '{print $4}')
-  update_etc_hosts "mongodb-ce-0.mongodb-ce-svc.mongodb.svc.cluster.local" "${mongodb_ip_0}"
-
-  local mongodb_ip_1=""
-  mongodb_ip_1=$(microk8s kubectl get svc mongodb-ce-lb-svc-1 -nmongodb | grep LoadBalancer | awk '{print $4}')
-  update_etc_hosts "mongodb-ce-1.mongodb-ce-svc.mongodb.svc.cluster.local" "${mongodb_ip_1}"
-
-  local mongodb_ip_2=""
-  mongodb_ip_2=$(microk8s kubectl get svc mongodb-ce-lb-svc-2 -nmongodb | grep LoadBalancer | awk '{print $4}')
-  update_etc_hosts "mongodb-ce-2.mongodb-ce-svc.mongodb.svc.cluster.local" "${mongodb_ip_2}"
+  if [[ -n "$mongodb_ip" ]]; then
+    update_etc_hosts "mongodb$" "${mongodb_ip}"
+    log_success "Updated /etc/hosts with mongodb -> ${mongodb_ip}"
+  fi
 }
 
 ########################
-# Refreshes mongodb: installs mongodb if needed and waits until it starts
+# Bootstraps mongodb: installs operator and cluster
+# Arguments:
+#   none
+# Returns:
+#   none
+#########################
+bootstrap_mongodb() {
+  local operator_installed=""
+  is_percona_operator_installed operator_installed
+
+  if [[ "$operator_installed" == "false" ]]; then
+    install_percona_operator
+  else
+    log_success "Percona operator is already installed."
+  fi
+
+  # Get highest IP assigned by loadbalancer
+  local current_ip=""
+  get_current_ip current_ip "$(ip route | grep default | awk '{print $5}')"
+  local last_ip=""
+  find_the_highest_ip_assigned_by_loadbalancer last_ip "$current_ip"
+
+  # Deploy MongoDB cluster
+  deploy_mongodb_cluster "$last_ip"
+
+  # Wait for cluster to be ready
+  wait_for_mongodb_cluster 300
+
+  # Show connection info
+  get_mongodb_credentials
+}
+
+########################
+# Refreshes mongodb: installs if needed and waits until ready
 # Arguments:
 #   invoker username
 #   current ip address
@@ -302,58 +355,103 @@ refresh_mongodb() {
   local mongodb_status=""
   get_mongodb_status mongodb_status
 
-  if [[ $mongodb_status == *"Pending"* ]]; then
-    log_warn "$mongodb_status"
-    wait_for_mongodb_pods 180
-    get_mongodb_status mongodb_status
-    log_info "$mongodb_status"
-  elif [[ $mongodb_status == *"No resources found in mongodb namespace"* ]] || [[ $mongodb_status == *"Failed"* ]] || [[ $mongodb_status == *"error: the server"* ]]; then
-    log_warn "$mongodb_status"
-    bootstrap_mongodb "$current_ip"
-  elif [[ $mongodb_status == *"Running"* ]]; then
-    log_info "$mongodb_status"
+  if [[ "$mongodb_status" == "ready" ]]; then
+    log_success "MongoDB cluster is already running."
+    get_mongodb_credentials
+  elif [[ "$mongodb_status" == "initializing" ]] || [[ "$mongodb_status" == "pending" ]]; then
+    log_warn "MongoDB cluster is initializing, waiting..."
+    wait_for_mongodb_cluster 300
+    get_mongodb_credentials
+  elif [[ "$mongodb_status" == "not_found" ]] || [[ "$mongodb_status" == "no_crd" ]]; then
+    log_warn "MongoDB cluster is not deployed, bootstrapping it now..."
+    bootstrap_mongodb
   else
-    log_warn "$mongodb_status"
-    log_error "Unable to recover from this error, terminating script."
-    exit 1
+    log_warn "MongoDB status: $mongodb_status"
+    log_info "Attempting to wait for cluster..."
+    wait_for_mongodb_cluster 300
+    get_mongodb_credentials
   fi
 
   update_mongodb_etc_hosts
 
   log_success "MongoDB is running."
-
   newline
 }
 
 ########################
-# Scales mongodb statefulsets down to 0 while preserving the persistent volumes
+# Removes mongodb: deletes cluster, operator, and namespace
 # Arguments:
 #   none
 # Returns:
 #   none
 #########################
-scale_mongodb_statefulsets_down_to_zero() {
-  microk8s kubectl delete mongodbcommunity.mongodbcommunity.mongodb.com/mongodb-ce -nmongodb
-  log_info "Waiting for mongodb statefulsets to scale down to zero..."
-  microk8s kubectl wait --namespace mongodb --for=delete pod/mongodb-ce-0 --timeout=180s
-  microk8s kubectl wait --namespace mongodb --for=delete pod/mongodb-ce-1 --timeout=180s
-  microk8s kubectl wait --namespace mongodb --for=delete pod/mongodb-ce-2 --timeout=180s
+remove_mongodb() {
+  log_info "Removing MongoDB cluster and Percona operator..."
+
+  # Delete MongoDB cluster via Helm
+  log_info "Uninstalling MongoDB cluster Helm release..."
+  microk8s helm3 uninstall "$MONGODB_RELEASE_NAME" -n"$MONGODB_NAMESPACE" 2>/dev/null || true
+
+  # Remove finalizers from CR first (prevents hanging CRD deletion when operator is gone)
+  log_info "Removing finalizers from MongoDB CR..."
+  microk8s kubectl patch psmdb "$MONGODB_CR_NAME" -n"$MONGODB_NAMESPACE" -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+
+  # Delete any remaining PSMDB CR
+  microk8s kubectl delete psmdb "$MONGODB_CR_NAME" -n"$MONGODB_NAMESPACE" --ignore-not-found --grace-period=5 2>/dev/null || true
+
+  # Force delete pods (don't wait - they may hang with finalizer issues)
+  log_info "Force deleting MongoDB pods..."
+  microk8s kubectl delete pods -l "app.kubernetes.io/instance=$MONGODB_CR_NAME" -n"$MONGODB_NAMESPACE" --force --grace-period=0 --ignore-not-found 2>/dev/null || true
+
+  # Uninstall Percona operator via Helm
+  log_info "Uninstalling Percona operator Helm release..."
+  microk8s helm3 uninstall psmdb-operator -n"$MONGODB_NAMESPACE" 2>/dev/null || true
+
+  # Clean up Percona CRDs
+  log_info "Cleaning up Percona CRDs..."
+  microk8s kubectl get crd -o name 2>/dev/null | grep -E 'percona\.com|psmdb' | xargs -r microk8s kubectl delete --ignore-not-found 2>/dev/null || true
+
+  # Delete PVCs (data will be lost)
+  log_info "Deleting PVCs..."
+  microk8s kubectl delete pvc -l "app.kubernetes.io/instance=$MONGODB_CR_NAME" -n"$MONGODB_NAMESPACE" --ignore-not-found 2>/dev/null || true
+
+  # Delete namespace
+  log_info "Deleting mongodb namespace..."
+  microk8s kubectl delete namespace "$MONGODB_NAMESPACE" --ignore-not-found --grace-period=30 2>/dev/null || true
+
+  log_success "MongoDB and Percona operator removed."
 }
 
 ########################
-# Scales mongodb statefulsets up to normal
+# Stops mongodb: scales cluster down to 0
 # Arguments:
 #   none
 # Returns:
 #   none
 #########################
-scale_mongodb_statefulsets_up_to_normal() {
-  cat mongodb-kubernetes-operator/config/samples/mongodb.com_v1_mongodbcommunity_cr.yaml | sed "s/example-mongodb/mongodb-ce/g" | sed "s/  version:.*/  version: \"${MONGODB_VERSION}\"/g" | sed "s/my-user/root/g" | sed "s/my-scram/scram-secret/g" | sed "s/<your-password-here>/admin/g" | microk8s kubectl apply --namespace mongodb -f -
-  wait_for_mongodb_pods 180
+stop_mongodb() {
+  log_info "Stopping MongoDB cluster..."
+
+  local mongodb_status=""
+  get_mongodb_status mongodb_status
+
+  if [[ "$mongodb_status" == "not_found" ]] || [[ "$mongodb_status" == "no_crd" ]]; then
+    log_error "MongoDB cluster does not exist, nothing to stop."
+    exit 1
+  fi
+
+  # Scale down by pausing the cluster
+  microk8s kubectl patch psmdb "$MONGODB_CR_NAME" -n"$MONGODB_NAMESPACE" --type=merge -p '{"spec":{"pause":true}}' 2>&1
+
+  log_info "Waiting for MongoDB pods to terminate..."
+  microk8s kubectl wait --for=delete pod -l "app.kubernetes.io/instance=$MONGODB_CR_NAME,app.kubernetes.io/component=mongod" -n"$MONGODB_NAMESPACE" --timeout=180s 2>/dev/null || true
+
+  log_success "MongoDB has been stopped. PVCs are preserved."
+  newline
 }
 
 ########################
-# Starts mongodb: if it's already installed and scaled down, it will scale statefulsets up; if it's not installed, it will install it; if it's installed and running, it won't do anything
+# Starts mongodb: unpauses the cluster
 # Arguments:
 #   invoker username
 #   current ip address
@@ -374,34 +472,31 @@ start_mongodb() {
   local invoker_username=$1
   local current_ip=$2
 
+  log_info "Starting MongoDB cluster..."
+
   local mongodb_status=""
   get_mongodb_status mongodb_status
 
-  log_info "Starting MongoDB..."
-
-  if [[ $mongodb_status == *"Pending"* ]]; then
-    wait_for_mongodb_pods 180
-  elif [[ $mongodb_status == *"No resources found in mongodb namespace"* ]]; then
-    log_warn "$mongodb_status"
-    bootstrap_mongodb "$current_ip"
-  elif [[ $mongodb_status == *"Running"* ]]; then
-      log_error "MongoDB is already running, it can't be started. Please run 'mongodb stop' to stop it while preserving the persistent volumes. It can be fully removed from the cluster with 'mongodb remove'."
-      exit 1
+  if [[ "$mongodb_status" == "not_found" ]] || [[ "$mongodb_status" == "no_crd" ]]; then
+    log_warn "MongoDB cluster does not exist, bootstrapping..."
+    bootstrap_mongodb
+  elif [[ "$mongodb_status" == "ready" ]]; then
+    log_warn "MongoDB is already running."
   else
-    log_warn "$mongodb_status"
-    log_error "Unable to recover from this error, terminating script."
-    exit 1
+    # Unpause the cluster
+    microk8s kubectl patch psmdb "$MONGODB_CR_NAME" -n"$MONGODB_NAMESPACE" --type=merge -p '{"spec":{"pause":false}}' 2>&1
+    wait_for_mongodb_cluster 300
   fi
 
   update_mongodb_etc_hosts
+  get_mongodb_credentials
 
   log_success "MongoDB has been started."
-
   newline
 }
 
 ########################
-# Restarts mongodb: if it's already installed and scaled down, it will scale statefulsets up; if it's not installed, it will install it; if it's installed and running, it will scale it down to zero and then scale it back to normal again
+# Restarts mongodb: stops and starts the cluster
 # Arguments:
 #   invoker username
 #   current ip address
@@ -422,62 +517,28 @@ restart_mongodb() {
   local invoker_username=$1
   local current_ip=$2
 
+  log_info "Restarting MongoDB cluster..."
+
   local mongodb_status=""
   get_mongodb_status mongodb_status
 
-  log_info "Restarting MongoDB..."
-
-  if [[ $mongodb_status == *"Pending"* ]] || [[ $mongodb_status == *"Running"* ]]; then
-    scale_mongodb_statefulsets_down_to_zero
-    log_success "MongoDB is no longer running, starting it up..."
-    scale_mongodb_statefulsets_up_to_normal
-  elif [[ $mongodb_status == *"No resources found in mongodb namespace"* ]] || [[ $mongodb_status == *"Failed"* ]]; then
-    log_warn "$mongodb_status"
-    bootstrap_mongodb "$current_ip"
+  if [[ "$mongodb_status" == "not_found" ]] || [[ "$mongodb_status" == "no_crd" ]]; then
+    log_warn "MongoDB cluster does not exist, bootstrapping..."
+    bootstrap_mongodb
   else
-    log_warn "$mongodb_status"
-    log_error "Unable to recover from this error, terminating script."
-    exit 1
+    # Rolling restart by triggering annotation change
+    microk8s kubectl patch psmdb "$MONGODB_CR_NAME" -n"$MONGODB_NAMESPACE" --type=merge \
+      -p "{\"spec\":{\"replsets\":[{\"name\":\"rs0\",\"annotations\":{\"restart-trigger\":\"$(date +%s)\"}}]}}" 2>&1 || true
+
+    log_info "Rolling restart triggered, waiting for cluster..."
+    sleep 10
+    wait_for_mongodb_cluster 300
   fi
 
   update_mongodb_etc_hosts
+  get_mongodb_credentials
 
-  log_success "MongoDB has been re-started."
-
-  newline
-}
-
-########################
-# Stops mongodb: scales statefulsets down to 0 while preserving the persistent volumes
-# Arguments:
-#   none
-# Returns:
-#   none
-#########################
-stop_mongodb() {
-  local mongodb_status=""
-  get_mongodb_status mongodb_status
-
-  log_info "Stopping MongoDB..."
-
-  if [[ $mongodb_status == *"Failed"* ]]; then
-    scale_mongodb_statefulsets_down_to_zero
-  elif [[ $mongodb_status == *"Pending"* ]]; then
-    scale_mongodb_statefulsets_down_to_zero
-  elif [[ $mongodb_status == *"No resources found in mongodb namespace"* ]]; then
-    log_warn "$mongodb_status"
-    log_error "MongoDB does not exist on this cluster, it can't be safely stopped."
-    exit 1
-  elif [[ $mongodb_status == *"Running"* ]]; then
-    scale_mongodb_statefulsets_down_to_zero
-  else
-    log_warn "$mongodb_status"
-    log_error "Unable to recover from this error, terminating script."
-    exit 1
-  fi
-
-  log_success "MongoDB has been stopped."
-
+  log_success "MongoDB has been restarted."
   newline
 }
 
@@ -545,8 +606,7 @@ run_mongodb_flow() {
   elif [[ "${flow_action}" == "remove" ]]; then
     log_warn "Removing MongoDB in 10 seconds.... (Press CTRL+C to abort)"
     sleep 10
-    microk8s kubectl delete pod --selector app=mongodb --grace-period=0 --force --namespace mongodb
-    microk8s kubectl delete namespace mongodb
+    remove_mongodb
     log_warn "MongoDB removed."
     exit 0
   else

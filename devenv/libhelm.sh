@@ -82,6 +82,37 @@ add_helm_repository() {
 }
 
 ########################
+# Removes a Helm repository
+# Arguments:
+#   repository name
+# Returns:
+#   none
+#########################
+remove_helm_repository() {
+  if [[ -z "$1" ]]; then
+    log_error "Please make sure to pass repository name argument to remove_helm_repository() function."
+    exit 1
+  fi
+
+  local repository_name=$1
+
+  local helm_repository_exists=""
+  does_helm_repository_exist helm_repository_exists "${repository_name}"
+
+  if [[ $helm_repository_exists == *"true"* ]]; then
+    log_info "Removing '${repository_name}' Helm repository..."
+    local repository_remove=""
+    repository_remove=$(2>&1 microk8s helm3 repo remove "${repository_name}")
+
+    if [[ "$?" -ne 0 ]]; then
+      log_warn "$repository_remove"
+    else
+      log_success "'${repository_name}' Helm repository removed successfully."
+    fi
+  fi
+}
+
+########################
 # Refreshes given helm repository
 # Arguments:
 #   repository name

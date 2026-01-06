@@ -119,6 +119,196 @@ snap_stop_microk8s() {
 }
 
 ########################
+# Clears stuck snap changes for microk8s
+# Arguments:
+#   none
+# Returns:
+#   none
+#########################
+clear_stuck_snap_changes() {
+  log_info "Checking for stuck snap changes..."
+
+  local stuck_change_id=""
+  stuck_change_id=$(snap changes 2>/dev/null | grep -E "(Do|Doing|Undo).*microk8s" | awk '{print $1}' | head -1)
+
+  if [[ -n "$stuck_change_id" ]]; then
+    log_warn "Found stuck snap change: $stuck_change_id. Attempting to abort..."
+    snap abort "$stuck_change_id" 2>/dev/null || true
+    sleep 2
+
+    # Check if still stuck
+    stuck_change_id=$(snap changes 2>/dev/null | grep -E "(Do|Doing|Undo).*microk8s" | awk '{print $1}' | head -1)
+    if [[ -n "$stuck_change_id" ]]; then
+      log_warn "Change still stuck. Attempting to fix snapd state..."
+      fix_snapd_state
+    fi
+  fi
+}
+
+########################
+# Fixes corrupted snapd state by marking stuck changes as done and removing microk8s entries
+# Arguments:
+#   none
+# Returns:
+#   none
+#########################
+fix_snapd_state() {
+  log_info "Stopping snapd services..."
+  systemctl stop snapd.socket snapd.service 2>/dev/null || true
+  sleep 2
+
+  if [[ -f /var/lib/snapd/state.json ]]; then
+    log_info "Creating backup of snapd state..."
+    cp /var/lib/snapd/state.json /var/lib/snapd/state.json.bak.$(date +%Y%m%d%H%M%S)
+
+    log_info "Fixing snapd state..."
+    python3 -c "
+import json
+import sys
+
+try:
+    with open('/var/lib/snapd/state.json', 'r') as f:
+        state = json.load(f)
+
+    modified = False
+
+    # Mark all microk8s-related changes as done
+    for change_id, change in state.get('changes', {}).items():
+        if 'microk8s' in str(change) and change.get('ready') != True:
+            change['status'] = 4  # Error status
+            change['ready'] = True
+            modified = True
+            print(f'Marked change {change_id} as done')
+
+    # Remove microk8s from snaps
+    if 'snaps' in state.get('data', {}):
+        if 'microk8s' in state['data']['snaps']:
+            del state['data']['snaps']['microk8s']
+            modified = True
+            print('Removed microk8s from snaps')
+
+    if modified:
+        with open('/var/lib/snapd/state.json', 'w') as f:
+            json.dump(state, f)
+        print('State file updated')
+    else:
+        print('No modifications needed')
+
+except Exception as e:
+    print(f'Error: {e}', file=sys.stderr)
+    sys.exit(1)
+" 2>&1
+
+    if [[ "$?" -ne 0 ]]; then
+      log_error "Failed to fix snapd state"
+      systemctl start snapd.socket snapd.service
+      return 1
+    fi
+  fi
+
+  log_info "Restarting snapd services..."
+  systemctl start snapd.socket snapd.service
+  sleep 2
+}
+
+########################
+# Forcefully removes microk8s snap and cleans up all related files
+# Arguments:
+#   none
+# Returns:
+#   0 on success, 1 on failure
+#########################
+force_remove_microk8s() {
+  local snap_status=""
+  snap_status=$(snap list microk8s 2>&1)
+
+  if [[ "$snap_status" == *"no matching snaps installed"* ]]; then
+    log_success "microk8s is not installed."
+    return 0
+  fi
+
+  # First, gracefully stop microk8s services before removal (with timeout)
+  log_info "Gracefully stopping microk8s services before removal..."
+  if microk8s status --wait-ready &>/dev/null; then
+    # Use timeout to prevent hanging - 5 minutes should be enough for graceful stop
+    if timeout 300 microk8s stop 2>/dev/null; then
+      log_success "microk8s services stopped gracefully."
+    else
+      local timeout_exit=$?
+      if [[ $timeout_exit -eq 124 ]]; then
+        log_warn "microk8s stop timed out after 5 minutes, forcing service termination..."
+        # Kill any remaining microk8s-related processes
+        pkill -9 -f "microk8s" 2>/dev/null || true
+        pkill -9 -f "k8s-dqlite" 2>/dev/null || true
+        pkill -9 -f "containerd" 2>/dev/null || true
+        sleep 2
+      else
+        log_warn "microk8s stop failed, proceeding with removal anyway..."
+      fi
+    fi
+  fi
+
+  # Now try normal removal
+  log_info "Attempting normal snap removal..."
+  if snap remove microk8s --purge 2>/dev/null; then
+    log_success "microk8s removed successfully."
+    return 0
+  fi
+
+  # Check if removal is stuck due to change in progress
+  local remove_error=""
+  remove_error=$(snap remove microk8s --purge 2>&1)
+
+  if [[ "$remove_error" == *"change in progress"* ]]; then
+    log_warn "Snap removal stuck. Attempting to clear stuck changes..."
+    clear_stuck_snap_changes
+
+    # Retry removal
+    if snap remove microk8s --purge 2>/dev/null; then
+      log_success "microk8s removed successfully after clearing stuck changes."
+      return 0
+    fi
+  fi
+
+  # If still failing, do manual cleanup
+  log_warn "Normal removal failed. Performing manual cleanup..."
+
+  # Stop snapd
+  systemctl stop snapd.socket snapd.service 2>/dev/null || true
+  sleep 2
+
+  # Unmount any microk8s squashfs mounts
+  log_info "Unmounting microk8s filesystems..."
+  mount | grep microk8s | awk '{print $3}' | while read -r mnt; do
+    umount -l "$mnt" 2>/dev/null || true
+  done
+
+  # Remove microk8s directories
+  log_info "Removing microk8s directories..."
+  rm -rf /snap/microk8s 2>/dev/null || true
+  rm -rf /var/snap/microk8s 2>/dev/null || true
+  rm -rf /var/lib/snapd/snap/microk8s 2>/dev/null || true
+  rm -rf /root/snap/microk8s 2>/dev/null || true
+  rm -rf /home/*/snap/microk8s 2>/dev/null || true
+
+  # Remove the snap file itself
+  rm -f /var/lib/snapd/snaps/microk8s_*.snap 2>/dev/null || true
+
+  # Fix snapd state
+  fix_snapd_state
+
+  # Verify removal
+  snap_status=$(snap list microk8s 2>&1)
+  if [[ "$snap_status" == *"no matching snaps installed"* ]]; then
+    log_success "microk8s forcefully removed."
+    return 0
+  else
+    log_error "Failed to remove microk8s: $snap_status"
+    return 1
+  fi
+}
+
+########################
 # Refreshes kubectl configuration allowing the script invoker to use kubectl command locally to interact with microk8s cluster
 # Arguments:
 #   invoker username
@@ -504,16 +694,18 @@ refresh_microk8s_plugin() {
 
       microk8s status -a "$plugin_name" --wait-ready
 
-      local spinner_counter=0
+      log_info "Waiting for '$plugin_name' deployments with label '$plugin_pod' in '$plugin_namespace' namespace to be available..."
 
-      log_info "Waiting for '$plugin_name' pod '$plugin_pod' in '$plugin_namespace' namespace..."
+      local wait_result=""
+      wait_result=$(microk8s kubectl wait --for=condition=Available deployment -l "$plugin_pod" -n"$plugin_namespace" --timeout=300s 2>&1)
 
-      until microk8s kubectl get pod -l "$plugin_pod" -n"$plugin_namespace" -o go-template='{{.items | len}}' | grep -qxF 1; do
-        spin spinner_counter "$spinner_counter"
-        sleep 0.1
-      done
-
-      finish_spin
+      if [[ "$?" -ne 0 ]]; then
+        log_warn "Timeout or error waiting for deployments: $wait_result"
+        log_info "Checking if pods are running anyway..."
+        microk8s kubectl get pods -l "$plugin_pod" -n"$plugin_namespace"
+      else
+        echo "$wait_result"
+      fi
 
       log_success "microk8s plugin '$plugin_name' started."
 
@@ -750,9 +942,13 @@ run_microk8s_flow() {
   elif [[ "${flow_action}" == "remove" ]]; then
     log_warn "Removing microk8s in 10 seconds.... (Press CTRL+C to abort)"
     sleep 10
-    snap remove microk8s
-    log_warn "Microk8s removed."
-    exit 0
+    if force_remove_microk8s; then
+      log_success "Microk8s removed successfully."
+      exit 0
+    else
+      log_error "Failed to remove microk8s. Check logs above for details."
+      exit 1
+    fi
   else
     log_error "Unknown flow action '${flow_action}' for microk8s flow, terminating script."
     exit 1
